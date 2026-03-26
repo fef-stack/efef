@@ -10,69 +10,55 @@ st.markdown("**이론적 배경:** 단순한 텍스트나 1차원 그래프를 �
 col_control, col_visual = st.columns([1, 2.5])
 
 # ==========================================
-# 1. 제어 패널 (사이드바 대신 직관적인 좌측 배치)
+# 1. 제어 패널
 # ==========================================
 with col_control:
     st.subheader("🎛️ 물리적 스트레스 인가")
     st.markdown("반도체 소자에 가해지는 가혹 조건을 설정해보세요.")
     
-    # 드레인 전압 (HCI 현상의 주원인)
     vd_stress = st.slider("⚡ 드레인 전압 (V_d)", min_value=1.0, max_value=5.0, value=1.5, step=0.1)
-    
-    # 스트레스 인가 시간
     time_stress = st.slider("⏳ 스트레스 시간 (Years)", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
     
     st.info("💡 **동작 원리:**\n\n전압과 시간이 증가할수록, 드레인(오른쪽) 근처에서 강한 전기장을 얻은 고에너지 전자(Hot Carrier)가 산화막을 타격하여 결함(Trap)을 생성합니다. AI는 이 공간적 파괴 현상을 실시간으로 계산하여 시각화합니다.")
 
 # ==========================================
-# 2. AI 대리 모델 기반 2D 히트맵 연산 (가상)
+# 2. AI 대리 모델 기반 2D 히트맵 연산
 # ==========================================
-# MOSFET 2D 그리드 생성 (가로: Source to Drain, 세로: Depth)
-x = np.linspace(0, 10, 100) # 채널 길이 (0=Source, 10=Drain)
-y = np.linspace(0, 5, 50)   # 깊이 (0~2: Gate Oxide, 2~5: Silicon Channel)
+x = np.linspace(0, 10, 100) 
+y = np.linspace(0, 5, 50)   
 X, Y = np.meshgrid(x, y)
 
-# 기본 결함 밀도 (초기 상태)
 trap_density = np.zeros_like(X)
 
-# HCI(Hot Carrier Injection) 프로파일 계산
-# 드레인(x=10) 근처, 산화막 계면(y=2) 부근에서 결함이 집중적으로 발생
-# 수식: 전압과 시간에 비례하여 드레인 쪽 가우시안 분포 형태로 결함 증가
 if time_stress > 0:
     intensity = (vd_stress ** 2) * (time_stress ** 0.5) * 0.1
-    # 드레인 쪽(x=9.5), 계면(y=2)을 중심으로 퍼지는 가우시안 형태의 결함 분포
     hci_profile = np.exp(-((X - 9.5)**2 / 2.0 + (Y - 2.0)**2 / 0.5))
     trap_density += intensity * hci_profile
 
 # ==========================================
-# 3. Plotly 2D 화려한 시각화
+# 3. Plotly 2D 화려한 시각화 (에러 수정됨!)
 # ==========================================
 with col_visual:
     fig = go.Figure()
 
-    # 히트맵 (결함 분포)
     fig.add_trace(go.Contour(
         z=trap_density, x=x, y=y,
-        colorscale='Inferno', # 뜨거운 느낌을 주는 컬러맵 (검정 -> 빨강 -> 노랑)
+        colorscale='Inferno', 
         showscale=True,
-        zmin=0, zmax=5, # 컬러바 고정 (변화 체감을 위해)
-        colorbar=dict(title="결함 밀도 (N_it)", titleside="right"),
+        zmin=0, zmax=5, 
+        colorbar=dict(title="결함 밀도 (N_it)"), # <--- 여기서 에러가 해결되었습니다!
         contours=dict(showlines=False)
     ))
 
-    # 구조물 테두리 그리기 (MOSFET 형태 직관화)
-    # Source / Drain 영역
     fig.add_shape(type="rect", x0=0, y0=2, x1=2, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
     fig.add_annotation(x=1, y=3.5, text="Source (n+)", showarrow=False, font=dict(color="cyan", size=16))
     
     fig.add_shape(type="rect", x0=8, y0=2, x1=10, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
     fig.add_annotation(x=9, y=3.5, text="Drain (n+)", showarrow=False, font=dict(color="cyan", size=16))
 
-    # Gate 영역
     fig.add_shape(type="rect", x0=2.5, y0=0.5, x1=7.5, y1=1.5, line=dict(color="yellow", width=2), fillcolor="rgba(255,255,0,0.2)")
     fig.add_annotation(x=5, y=1, text="Gate Electrode", showarrow=False, font=dict(color="yellow", size=16))
     
-    # Gate Oxide 계면 선
     fig.add_shape(type="line", x0=2, y0=2, x1=8, y1=2, line=dict(color="white", width=3, dash="dash"))
     fig.add_annotation(x=5, y=2.2, text="SiO₂ Interface", showarrow=False, font=dict(color="white", size=12))
 
@@ -80,7 +66,7 @@ with col_visual:
         title="🔥 트랜지스터 단면 실시간 트랩(Trap) 생성 시뮬레이션",
         xaxis_title="채널 위치 (Position)",
         yaxis_title="깊이 (Depth) - 위(Gate) / 아래(Substrate)",
-        yaxis=dict(autorange="reversed"), # 깊이는 아래로 갈수록 증가하므로 뒤집기
+        yaxis=dict(autorange="reversed"), 
         template="plotly_dark",
         height=500,
         margin=dict(l=20, r=20, t=50, b=20)
@@ -88,7 +74,6 @@ with col_visual:
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # 상태 경고창
     max_trap = np.max(trap_density)
     if max_trap > 4:
         st.error(f"🚨 치명적 손상 발생! (최대 결함 지수: {max_trap:.1f}) - 소자 수명 종료")
