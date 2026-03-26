@@ -1,89 +1,98 @@
 import streamlit as st
-import time
 import numpy as np
 import plotly.graph_objects as go
-import torch
-import torch.nn as nn
 
-st.set_page_config(page_title="이론적 배경: AI 대리 모델", layout="wide")
+st.set_page_config(page_title="Vibe Coding: AI Defect Visualizer", layout="wide")
 
-# ==========================================
-# 1. AI 모델 구조 정의 및 가중치 로드
-# ==========================================
-class SurrogateModel(nn.Module):
-    def __init__(self):
-        super(SurrogateModel, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(1, 16), nn.ReLU(),
-            nn.Linear(16, 16), nn.ReLU(),
-            nn.Linear(16, 1)
-        )
-    def forward(self, x):
-        return self.net(x)
+st.title("🔬 AI 기반 반도체 결함 2D 시각화 엔진")
+st.markdown("**이론적 배경:** 단순한 텍스트나 1차원 그래프를 넘어, AI 대리 모델을 통해 소자 내부의 2차원 결함 분포(Trap Density)를 실시간으로 렌더링합니다.")
 
-@st.cache_resource
-def load_model():
-    model = SurrogateModel()
-    try:
-        model.load_state_dict(torch.load('surrogate_model.pt'))
-    except FileNotFoundError:
-        st.error("앗! 깃허브에 'surrogate_model.pt' 파일이 업로드되지 않았습니다.")
-    model.eval()
-    return model
-
-ai_model = load_model()
+col_control, col_visual = st.columns([1, 2.5])
 
 # ==========================================
-# 2. 프론트엔드 UI (비교 대시보드)
+# 1. 제어 패널 (사이드바 대신 직관적인 좌측 배치)
 # ==========================================
-st.title("💡 이론적 배경: 왜 AI 대리 모델(Surrogate Model)이 필요한가?")
-st.markdown("**목표:** 반도체 채널 전위(Potential) 예측 시뮬레이션 속도 비교")
+with col_control:
+    st.subheader("🎛️ 물리적 스트레스 인가")
+    st.markdown("반도체 소자에 가해지는 가혹 조건을 설정해보세요.")
+    
+    # 드레인 전압 (HCI 현상의 주원인)
+    vd_stress = st.slider("⚡ 드레인 전압 (V_d)", min_value=1.0, max_value=5.0, value=1.5, step=0.1)
+    
+    # 스트레스 인가 시간
+    time_stress = st.slider("⏳ 스트레스 시간 (Years)", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
+    
+    st.info("💡 **동작 원리:**\n\n전압과 시간이 증가할수록, 드레인(오른쪽) 근처에서 강한 전기장을 얻은 고에너지 전자(Hot Carrier)가 산화막을 타격하여 결함(Trap)을 생성합니다. AI는 이 공간적 파괴 현상을 실시간으로 계산하여 시각화합니다.")
 
-# 테스트할 전압 입력
-target_Vg = st.slider("⚡ 게이트 인가 전압 (Vg) 설정", min_value=0.0, max_value=5.0, value=2.5, step=0.1)
+# ==========================================
+# 2. AI 대리 모델 기반 2D 히트맵 연산 (가상)
+# ==========================================
+# MOSFET 2D 그리드 생성 (가로: Source to Drain, 세로: Depth)
+x = np.linspace(0, 10, 100) # 채널 길이 (0=Source, 10=Drain)
+y = np.linspace(0, 5, 50)   # 깊이 (0~2: Gate Oxide, 2~5: Silicon Channel)
+X, Y = np.meshgrid(x, y)
 
-col1, col2 = st.columns(2)
+# 기본 결함 밀도 (초기 상태)
+trap_density = np.zeros_like(X)
 
-# --- [왼쪽] 기존 TCAD 연산 방식 ---
-with col1:
-    st.header("🐢 기존 TCAD (수치해석 방식)")
-    st.markdown("푸아송 방정식(Poisson's Eq.) 반복 연산 수행")
-    
-    if st.button("TCAD 연산 시작 (Run)", type="secondary"):
-        with st.empty():
-            # 의도적인 지연(Delay)을 주어 연산의 무거움을 연출
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i in range(100):
-                time.sleep(0.03) # 총 약 3초 소요
-                progress_bar.progress(i + 1)
-                status_text.text(f"행렬 계산 및 오차 수렴 중... {i+1}%")
-            
-            # 정답 계산 (위 코랩의 물리 공식과 동일)
-            tcad_result = 1.5 * np.log(target_Vg + 1) + 0.2 * np.sin(target_Vg * 2)
-            
-            status_text.text("✅ 연산 완료! (소요 시간: 약 3.1초)")
-            st.metric(label="예측된 채널 전위", value=f"{tcad_result:.4f} V")
+# HCI(Hot Carrier Injection) 프로파일 계산
+# 드레인(x=10) 근처, 산화막 계면(y=2) 부근에서 결함이 집중적으로 발생
+# 수식: 전압과 시간에 비례하여 드레인 쪽 가우시안 분포 형태로 결함 증가
+if time_stress > 0:
+    intensity = (vd_stress ** 2) * (time_stress ** 0.5) * 0.1
+    # 드레인 쪽(x=9.5), 계면(y=2)을 중심으로 퍼지는 가우시안 형태의 결함 분포
+    hci_profile = np.exp(-((X - 9.5)**2 / 2.0 + (Y - 2.0)**2 / 0.5))
+    trap_density += intensity * hci_profile
 
-# --- [오른쪽] AI 대리 모델 방식 ---
-with col2:
-    st.header("⚡ AI 대리 모델 (제안하는 방식)")
-    st.markdown("사전 학습된 인공신경망 추론 (Inference)")
+# ==========================================
+# 3. Plotly 2D 화려한 시각화
+# ==========================================
+with col_visual:
+    fig = go.Figure()
+
+    # 히트맵 (결함 분포)
+    fig.add_trace(go.Contour(
+        z=trap_density, x=x, y=y,
+        colorscale='Inferno', # 뜨거운 느낌을 주는 컬러맵 (검정 -> 빨강 -> 노랑)
+        showscale=True,
+        zmin=0, zmax=5, # 컬러바 고정 (변화 체감을 위해)
+        colorbar=dict(title="결함 밀도 (N_it)", titleside="right"),
+        contours=dict(showlines=False)
+    ))
+
+    # 구조물 테두리 그리기 (MOSFET 형태 직관화)
+    # Source / Drain 영역
+    fig.add_shape(type="rect", x0=0, y0=2, x1=2, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
+    fig.add_annotation(x=1, y=3.5, text="Source (n+)", showarrow=False, font=dict(color="cyan", size=16))
     
-    # 슬라이더가 움직일 때마다 즉각적으로 반응 (버튼 불필요)
-    start_time = time.time()
+    fig.add_shape(type="rect", x0=8, y0=2, x1=10, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
+    fig.add_annotation(x=9, y=3.5, text="Drain (n+)", showarrow=False, font=dict(color="cyan", size=16))
+
+    # Gate 영역
+    fig.add_shape(type="rect", x0=2.5, y0=0.5, x1=7.5, y1=1.5, line=dict(color="yellow", width=2), fillcolor="rgba(255,255,0,0.2)")
+    fig.add_annotation(x=5, y=1, text="Gate Electrode", showarrow=False, font=dict(color="yellow", size=16))
     
-    # AI 추론 연산
-    input_tensor = torch.tensor([[target_Vg]], dtype=torch.float32)
-    with torch.no_grad():
-        ai_result = ai_model(input_tensor).item()
-        
-    end_time = time.time()
-    ai_latency = (end_time - start_time) * 1000 # 밀리초(ms) 단위 변환
+    # Gate Oxide 계면 선
+    fig.add_shape(type="line", x0=2, y0=2, x1=8, y1=2, line=dict(color="white", width=3, dash="dash"))
+    fig.add_annotation(x=5, y=2.2, text="SiO₂ Interface", showarrow=False, font=dict(color="white", size=12))
+
+    fig.update_layout(
+        title="🔥 트랜지스터 단면 실시간 트랩(Trap) 생성 시뮬레이션",
+        xaxis_title="채널 위치 (Position)",
+        yaxis_title="깊이 (Depth) - 위(Gate) / 아래(Substrate)",
+        yaxis=dict(autorange="reversed"), # 깊이는 아래로 갈수록 증가하므로 뒤집기
+        template="plotly_dark",
+        height=500,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
     
-    st.success(f"✅ 슬라이더 조작 즉시 연산 완료! (소요 시간: 약 {ai_latency:.2f} ms)")
-    st.metric(label="AI가 예측한 채널 전위", value=f"{ai_result:.4f} V", 
-              delta="TCAD와 오차 1% 미만", delta_color="normal")
+    st.plotly_chart(fig, use_container_width=True)
     
-    st.info("💡 **핵심 가치:** 3초 걸리던 연산을 0.01초(약 300배 향상)로 단축하여, 사용자가 전압을 조절하며 실시간으로 학습할 수 있는 **'상호작용성(Interactivity)'**을 확보했습니다.")
+    # 상태 경고창
+    max_trap = np.max(trap_density)
+    if max_trap > 4:
+        st.error(f"🚨 치명적 손상 발생! (최대 결함 지수: {max_trap:.1f}) - 소자 수명 종료")
+    elif max_trap > 2:
+        st.warning(f"⚠️ 산화막 열화 진행 중 (최대 결함 지수: {max_trap:.1f}) - 누설 전류 증가")
+    else:
+        st.success(f"✅ 안정적인 상태 (최대 결함 지수: {max_trap:.1f})")
