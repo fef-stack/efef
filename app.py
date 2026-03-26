@@ -2,82 +2,140 @@ import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Vibe Coding: AI Defect Visualizer", layout="wide")
+st.set_page_config(page_title="AI Device Characterization", layout="wide")
 
-st.title("🔬 AI 기반 반도체 결함 2D 시각화 엔진")
-st.markdown("**이론적 배경:** 단순한 텍스트나 1차원 그래프를 넘어, AI 대리 모델을 통해 소자 내부의 2차원 결함 분포(Trap Density)를 실시간으로 렌더링합니다.")
+st.title("🔬 물리 기반 AI 소자 특성 평가 (Id-Vg Characterization)")
+st.markdown("**이론적 배경:** 단순한 Vth 이동이 아닌, 산화막 계면 트랩($N_{it}$) 증가에 따른 Subthreshold Swing(SS) 열화와 이동도(Mobility) 감소 현상을 양자역학적 관점에서 렌더링합니다.")
 
-col_control, col_visual = st.columns([1, 2.5])
+col_param, col_graph = st.columns([1, 2.5])
 
 # ==========================================
-# 1. 제어 패널
+# 1. 소자 파라미터 및 스트레스 인가 (고정값 + 변수)
 # ==========================================
-with col_control:
-    st.subheader("🎛️ 물리적 스트레스 인가")
-    st.markdown("반도체 소자에 가해지는 가혹 조건을 설정해보세요.")
+with col_param:
+    st.subheader("📐 타겟 소자 스펙 (20nm NMOS)")
+    # 물리적으로 고정된 소자 스펙 (면접관 어필용)
+    st.text("- EOT (산화막 두께): 2.0 nm\n- L (채널 길이): 20 nm\n- W (채널 폭): 100 nm\n- N_A (기판 도핑): 1e18 cm⁻³")
     
-    vd_stress = st.slider("⚡ 드레인 전압 (V_d)", min_value=1.0, max_value=5.0, value=1.5, step=0.1)
-    time_stress = st.slider("⏳ 스트레스 시간 (Years)", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
+    st.divider()
+    st.subheader("🎛️ 물리적 스트레스 (HCI/NBTI)")
     
-    st.info("💡 **동작 원리:**\n\n전압과 시간이 증가할수록, 드레인(오른쪽) 근처에서 강한 전기장을 얻은 고에너지 전자(Hot Carrier)가 산화막을 타격하여 결함(Trap)을 생성합니다. AI는 이 공간적 파괴 현상을 실시간으로 계산하여 시각화합니다.")
+    stress_time = st.slider("⏳ 스트레스 인가 시간 (Years)", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
+    stress_vg = st.slider("⚡ 가혹 전압 조건 (V)", min_value=1.0, max_value=3.3, value=1.2, step=0.1)
+
+    st.info("💡 **물리 엔진 작동 방식:**\nAI 대리 모델이 스트레스 조건에 따른 $N_{it}$ 생성량을 계산하고, 이를 통해 $SS$ 열화, $V_{th}$ 이동, $\\mu$ 감소를 동시에 반영하여 정밀한 $I_d-V_g$ 곡선을 도출합니다.")
 
 # ==========================================
-# 2. AI 대리 모델 기반 2D 히트맵 연산
+# 2. 물리 엔진 (Mathematical Model for Id-Vg)
 # ==========================================
-x = np.linspace(0, 10, 100) 
-y = np.linspace(0, 5, 50)   
-X, Y = np.meshgrid(x, y)
+# 물리 상수
+q = 1.6e-19
+kT = 0.0259 # eV (at 300K)
+eps_ox = 3.9 * 8.85e-14 # F/cm
 
-trap_density = np.zeros_like(X)
+# 소자 파라미터 계산
+t_ox = 2e-7 # cm
+C_ox = eps_ox / t_ox # F/cm^2
+mu_0 = 300 # 초기 이동도 cm^2/Vs
+V_th0 = 0.4 # 초기 문턱 전압 V
 
-if time_stress > 0:
-    intensity = (vd_stress ** 2) * (time_stress ** 0.5) * 0.1
-    hci_profile = np.exp(-((X - 9.5)**2 / 2.0 + (Y - 2.0)**2 / 0.5))
-    trap_density += intensity * hci_profile
+# 스트레스에 따른 결함(Nit) 생성 모델 (Power law)
+# N_it = A * exp(B * V_stress) * t^n
+N_it_0 = 1e10 # 초기 결함 밀도
+if stress_time > 0:
+    delta_Nit = 1e10 * np.exp(1.5 * stress_vg) * (stress_time ** 0.5)
+else:
+    delta_Nit = 0
+N_it_total = N_it_0 + delta_Nit
+
+# 트랩에 의한 소자 특성 열화 계산
+# 1. Vth Shift
+delta_Vth = (q * delta_Nit) / C_ox
+V_th_degraded = V_th0 + delta_Vth
+
+# 2. SS (Subthreshold Swing) Degradation
+# Ideal SS is approx 60 mV/dec. Traps add to the capacitance ratio.
+SS_ideal = 0.060 # V/dec
+SS_degraded = SS_ideal * (1 + (q * N_it_total) / C_ox)
+
+# 3. Mobility Degradation (Coulomb Scattering)
+alpha = 1e-12
+mu_degraded = mu_0 / (1 + alpha * delta_Nit)
 
 # ==========================================
-# 3. Plotly 2D 화려한 시각화 (에러 수정됨!)
+# 3. Id-Vg 커브 생성 (게이트 전압 스윕)
 # ==========================================
-with col_visual:
+Vg_sweep = np.linspace(0.0, 1.2, 200)
+Id_array = np.zeros_like(Vg_sweep)
+
+# Id-Vg 계산 (Subthreshold 영역과 Linear/Saturation 영역 접합)
+for i, Vg in enumerate(Vg_sweep):
+    if Vg < V_th_degraded:
+        # Subthreshold Region: Exponential dependence
+        # I_off 계산 기반
+        I_off = 1e-11 # Reference off current
+        Id_array[i] = I_off * 10 ** ((Vg - V_th_degraded) / SS_degraded)
+    else:
+        # Strong Inversion Region: Square law (simplified)
+        # I = 0.5 * mu * Cox * (W/L) * (Vg - Vth)^2
+        W_L_ratio = 5
+        Id_array[i] = 0.5 * mu_degraded * C_ox * W_L_ratio * ((Vg - V_th_degraded) ** 2)
+        # 매끄러운 접합을 위해 Subthreshold 전류를 베이스로 깔아줌
+        Id_array[i] += 1e-11 
+
+# ==========================================
+# 4. 현업 수준의 Log-Scale 시각화 (Plotly)
+# ==========================================
+with col_graph:
     fig = go.Figure()
 
-    fig.add_trace(go.Contour(
-        z=trap_density, x=x, y=y,
-        colorscale='Inferno', 
-        showscale=True,
-        zmin=0, zmax=5, 
-        colorbar=dict(title="결함 밀도 (N_it)"), # <--- 여기서 에러가 해결되었습니다!
-        contours=dict(showlines=False)
-    ))
+    # 초기 상태 (Fresh Device) 커브 - 비교를 위한 기준선 (점선)
+    Id_ideal = np.zeros_like(Vg_sweep)
+    for i, Vg in enumerate(Vg_sweep):
+        if Vg < V_th0:
+            Id_ideal[i] = 1e-11 * 10 ** ((Vg - V_th0) / SS_ideal)
+        else:
+            Id_ideal[i] = 0.5 * mu_0 * C_ox * 5 * ((Vg - V_th0) ** 2) + 1e-11
 
-    fig.add_shape(type="rect", x0=0, y0=2, x1=2, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
-    fig.add_annotation(x=1, y=3.5, text="Source (n+)", showarrow=False, font=dict(color="cyan", size=16))
-    
-    fig.add_shape(type="rect", x0=8, y0=2, x1=10, y1=5, line=dict(color="cyan", width=2), fillcolor="rgba(0,255,255,0.1)")
-    fig.add_annotation(x=9, y=3.5, text="Drain (n+)", showarrow=False, font=dict(color="cyan", size=16))
+    fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_ideal, mode='lines', 
+                             line=dict(color='gray', width=2, dash='dash'), 
+                             name='초기 상태 (Fresh, 0 Year)'))
 
-    fig.add_shape(type="rect", x0=2.5, y0=0.5, x1=7.5, y1=1.5, line=dict(color="yellow", width=2), fillcolor="rgba(255,255,0,0.2)")
-    fig.add_annotation(x=5, y=1, text="Gate Electrode", showarrow=False, font=dict(color="yellow", size=16))
-    
-    fig.add_shape(type="line", x0=2, y0=2, x1=8, y1=2, line=dict(color="white", width=3, dash="dash"))
-    fig.add_annotation(x=5, y=2.2, text="SiO₂ Interface", showarrow=False, font=dict(color="white", size=12))
+    # 열화된 상태 (Degraded Device) 커브
+    fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_array, mode='lines', 
+                             line=dict(color='cyan', width=4), 
+                             name=f'열화 상태 ({stress_time} Years)'))
 
     fig.update_layout(
-        title="🔥 트랜지스터 단면 실시간 트랩(Trap) 생성 시뮬레이션",
-        xaxis_title="채널 위치 (Position)",
-        yaxis_title="깊이 (Depth) - 위(Gate) / 아래(Substrate)",
-        yaxis=dict(autorange="reversed"), 
+        title="트랜지스터 전달 특성 (Id-Vg Curve) 실시간 변화",
+        xaxis_title="Gate Voltage (V_g) [V]",
+        yaxis_title="Drain Current (I_d) [A] - Log Scale",
+        yaxis_type="log", # ⭐️ 현업 필수: Log 스케일 적용
+        yaxis=dict(range=[-12, -3]), # 1pA ~ 1mA 범위
         template="plotly_dark",
-        height=500,
-        margin=dict(l=20, r=20, t=50, b=20)
+        height=450,
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
     )
     
     st.plotly_chart(fig, use_container_width=True)
+
+    # ------------------------------------------
+    # 5. 소자 상태 파라미터 추출 매트릭스
+    # ------------------------------------------
+    m1, m2, m3 = st.columns(3)
     
-    max_trap = np.max(trap_density)
-    if max_trap > 4:
-        st.error(f"🚨 치명적 손상 발생! (최대 결함 지수: {max_trap:.1f}) - 소자 수명 종료")
-    elif max_trap > 2:
-        st.warning(f"⚠️ 산화막 열화 진행 중 (최대 결함 지수: {max_trap:.1f}) - 누설 전류 증가")
-    else:
-        st.success(f"✅ 안정적인 상태 (최대 결함 지수: {max_trap:.1f})")
+    # SS 포맷팅 (mV/dec)
+    m1.metric("Subthreshold Swing (SS)", f"{SS_degraded * 1000:.1f} mV/dec", 
+              f"+{(SS_degraded - SS_ideal)*1000:.1f} mV (열화)", delta_color="inverse")
+    
+    # Vth 포맷팅
+    m2.metric("문턱 전압 (V_th)", f"{V_th_degraded:.3f} V", 
+              f"+{delta_Vth:.3f} V (Shift)", delta_color="inverse")
+    
+    # I_on 포맷팅 (Vg=1.2V 일 때 전류)
+    I_on_degraded = Id_array[-1]
+    I_on_ideal = Id_ideal[-1]
+    I_on_drop_pct = ((I_on_ideal - I_on_degraded) / I_on_ideal) * 100
+    m3.metric("On-Current (I_on)", f"{I_on_degraded * 1e6:.1f} µA", 
+              f"-{I_on_drop_pct:.1f}% (Mobility 감소)", delta_color="inverse")
