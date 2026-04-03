@@ -3,161 +3,152 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="고도화된 MOSFET 물리 시뮬레이터", layout="wide")
+st.set_page_config(page_title="고도화된 통합 물리 시뮬레이터", layout="wide")
 
-st.title("🔬 Advanced MOSFET Simulator: 산란 메커니즘 및 열화 분리")
+st.title("🔬 통합 소자 열화 시뮬레이터 (HCI & NBTI 복합 모델)")
 st.markdown("---")
 
 # ==========================================
-# 0. 제어 패널 (사이드바)
+# 1. 제어 패널 (사이드바)
 # ==========================================
 st.sidebar.header("🎛️ 환경 및 구조 파라미터")
-T_K = st.sidebar.slider("🌡️ 동작 온도 (T) [K]", min_value=300, max_value=400, value=300, step=10)
+T_K = st.sidebar.slider("🌡️ 동작 온도 (T) [K]", 300, 400, 300, 10)
 N_A_str = st.sidebar.select_slider("🧬 채널 도핑 농도 (N_A) [cm⁻³]", options=["1e16", "5e16", "1e17", "5e17", "1e18"], value="1e17")
 N_A = float(N_A_str)
 
 st.sidebar.divider()
-st.sidebar.header("⚡ 물리적 스트레스 인가")
-stress_time = st.sidebar.slider("⏳ 스트레스 시간 (Years)", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
-stress_vd = st.sidebar.slider("⚡ 가혹 전압 (V_d,stress)", min_value=1.0, max_value=3.3, value=1.5, step=0.1)
+st.sidebar.header("⚡ 스트레스 및 트랩 밀도")
+stress_time = st.sidebar.slider("⏳ 스트레스 시간 (Years)", 0.0, 10.0, 0.0, 0.5)
+stress_vd = st.sidebar.slider("⚡ 가혹 전압 (V_d,stress) [V]", 1.0, 3.3, 1.5, 0.1)
 
-# HCI vs NBTI 뉘앙스를 위한 트랩 비율 조절
-trap_type = st.sidebar.radio("결함 생성 지배 메커니즘", ["계면 트랩 지배 (N_it)", "산화막 트랩 지배 (N_ot)"])
+st.sidebar.markdown("### 🪤 개별 트랩 수동 제어")
+st.sidebar.caption("스트레스 조건에 의해 기본값이 계산되며, 수동으로 튜닝하여 영향을 비교할 수 있습니다.")
+
+# 스트레스 모델에 의한 기본 트랩 계산
+delta_trap_base = 5e10 * np.exp(1.2 * stress_vd) * (stress_time ** 0.5) if stress_time > 0 else 0
+
+Nit_slider = st.sidebar.slider("계면 트랩 밀도 (N_it) [x 10¹¹ cm⁻²]", 0.1, 50.0, max(0.1, delta_trap_base*0.8/1e11), 0.1)
+Not_slider = st.sidebar.slider("산화막 트랩 밀도 (N_ot) [x 10¹¹ cm⁻²]", 0.0, 50.0, delta_trap_base*0.2/1e11, 0.1)
+
+# 실제 적용될 트랩 밀도
+N_it_total = 1e10 + (Nit_slider * 1e11) # 기본 1e10 내재
+N_ot_total = (Not_slider * 1e11)
 
 # ==========================================
-# 1. 물리 엔진 (First-Principles based Models)
+# 2. 물리 엔진 연산
 # ==========================================
-# 물리 상수
 q = 1.6e-19
-k_B = 1.38e-23 # J/K
-k_eV = 8.617e-5 # eV/K
-eps_0 = 8.85e-14 # F/cm
+k_B = 1.38e-23
+eps_0 = 8.85e-14
 eps_si = 11.7 * eps_0
 eps_ox = 3.9 * eps_0
-n_i = 1.5e10 # cm^-3 at 300K (온도 의존성은 간략화)
-t_ox = 2e-7 # 2nm
+n_i = 1.5e10 
+t_ox = 2e-7 
+C_ox = eps_ox / t_ox
 
-# 기본 커패시턴스 및 포텐셜 계산
-C_ox = eps_ox / t_ox # F/cm^2
-phi_F = (k_B * T_K / q) * np.log(N_A / n_i) # 페르미 포텐셜
-W_dep = np.sqrt((2 * eps_si * (2 * phi_F)) / (q * N_A)) # 최대 공핍층 두께
-C_d = eps_si / W_dep # 공핍층 커패시턴스
+# Vth 및 SS 연산 (도핑 농도 N_A의 엄밀한 반영)
+phi_F = (k_B * T_K / q) * np.log(N_A / n_i)
+W_dep = np.sqrt((2 * eps_si * (2 * phi_F)) / (q * N_A))
+C_d = eps_si / W_dep
 
-# 초기 상태 파라미터 (Flat-band voltage 등 간략화하여 Vth0 계산)
 V_th0 = 0.4 + (2 * phi_F) + (np.sqrt(2 * q * eps_si * N_A * (2 * phi_F)) / C_ox)
-N_it_initial = 1e10 # 초기 계면 결함
 
-# ------------------------------------------
-# 스트레스에 의한 결함 생성 모델링
-# ------------------------------------------
-delta_trap_max = 0
-if stress_time > 0:
-    # t^0.5 의존성 (Reaction-Diffusion Model)
-    delta_trap_max = 5e10 * np.exp(1.2 * stress_vd) * (stress_time ** 0.5)
-
-# 트랩 종류 분리 (N_it vs N_ot)
-if trap_type == "계면 트랩 지배 (N_it)":
-    delta_Nit = delta_trap_max * 0.9
-    delta_Not = delta_trap_max * 0.1
-else:
-    delta_Nit = delta_trap_max * 0.1
-    delta_Not = delta_trap_max * 0.9
-
-N_it_total = N_it_initial + delta_Nit
-N_ot_total = delta_Not
-
-# ------------------------------------------
-# 거시적 소자 특성 열화 계산
-# ------------------------------------------
-# 1. Vth Shift (Nit와 Not 모두 영향)
-delta_Vth = (q * (delta_Nit + delta_Not)) / C_ox
+# 트랩 열화 반영
+delta_Vth = (q * ((N_it_total - 1e10) + N_ot_total)) / C_ox
 V_th_degraded = V_th0 + delta_Vth
 
-# 2. SS (Subthreshold Swing) 계산 (온도 T, C_d, N_it만 영향)
-# N_ot는 SS를 눕히지 않고 커브만 이동시킴
-SS_ideal = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * N_it_initial) / C_ox)
+SS_ideal = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * 1e10) / C_ox)
 SS_degraded = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * N_it_total) / C_ox)
 
-# ------------------------------------------
-# Id-Vg 커브 계산 (전압 의존적 이동도 적용)
-# ------------------------------------------
+# I-V 및 Mobility 커브 연산
 Vg_sweep = np.linspace(0.0, 1.5, 200)
-Id_ideal = np.zeros_like(Vg_sweep)
-Id_degraded = np.zeros_like(Vg_sweep)
-mu_eff_array = np.zeros_like(Vg_sweep)
+Id_ideal, Id_degraded, mu_eff_array = [], [], []
 
-for i, Vg in enumerate(Vg_sweep):
-    # A. 이동도 모델링 (Matthiessen's Rule)
-    # 1. Phonon Scattering (온도 의존성)
+for Vg in Vg_sweep:
+    # Matthiessen's Rule 이동도
     mu_ph = 300 * ((300 / T_K) ** 1.5)
-    
-    # 2. Surface Roughness Scattering (수직 전계 의존성)
-    # Vg가 커질수록 전자가 계면으로 끌려가 산란 심화
-    E_eff = max(0, (Vg - V_th_degraded)) 
+    E_eff = max(0, (Vg - V_th_degraded))
     mu_sr = 1000 / (1 + 2.0 * E_eff**2) if E_eff > 0 else 1000
+    mu_coulomb = 1e16 / max(1e10, N_it_total + N_ot_total)
     
-    # 3. Coulomb Scattering (결함 의존성)
-    # 결함이 많을수록 감소 (초기 상태 방지를 위해 분모에 작은 값 추가)
-    total_defects = max(1e10, N_it_total + N_ot_total)
-    mu_coulomb = 1e16 / total_defects
-    
-    # 유효 이동도 계산 (조화 평균)
     mu_eff = 1 / (1/mu_ph + 1/mu_sr + 1/mu_coulomb)
-    mu_eff_array[i] = mu_eff
+    mu_eff_array.append(mu_eff)
     
-    # B. 전류 계산
-    # Ideal Curve
+    # 이상적 커브
     if Vg < V_th0:
-        Id_ideal[i] = 1e-12 * 10 ** ((Vg - V_th0) / SS_ideal)
+        Id_ideal.append(1e-12 * 10 ** ((Vg - V_th0) / SS_ideal))
     else:
-        Id_ideal[i] = 0.5 * mu_eff * C_ox * 5 * ((Vg - V_th0) ** 2) + 1e-12
+        Id_ideal.append(0.5 * mu_eff * C_ox * 5 * ((Vg - V_th0) ** 2) + 1e-12)
         
-    # Degraded Curve
+    # 열화 커브
     if Vg < V_th_degraded:
-        Id_degraded[i] = 1e-12 * 10 ** ((Vg - V_th_degraded) / SS_degraded)
+        Id_degraded.append(1e-12 * 10 ** ((Vg - V_th_degraded) / SS_degraded))
     else:
-        Id_degraded[i] = 0.5 * mu_eff * C_ox * 5 * ((Vg - V_th_degraded) ** 2) + 1e-12
+        Id_degraded.append(0.5 * mu_eff * C_ox * 5 * ((Vg - V_th_degraded) ** 2) + 1e-12)
 
 # ==========================================
-# 2. 통합 시각화
+# 3. 통합 시각화 패널 구성
 # ==========================================
-fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.1,
-                    subplot_titles=("전압에 따른 유효 이동도 변화 (μ_eff)", 
-                                    "전달 특성 (Id-Vg) 곡선 변화"))
+fig = make_subplots(
+    rows=1, cols=2, 
+    horizontal_spacing=0.15,
+    specs=[[{"type": "xy"}, {"secondary_y": True}]], # 두 번째 플롯에 이중 Y축 적용
+    subplot_titles=("소자 내부 현상 (Nit & Not 직관적 시각화)", "통합 전달 특성 및 유효 이동도 (μ_eff)")
+)
 
-# [왼쪽] 이동도 변화 곡선
-fig.add_trace(go.Scatter(x=Vg_sweep, y=mu_eff_array, mode='lines', 
-                         line=dict(color='orange', width=3),
-                         name='유효 이동도 (μ_eff)'), row=1, col=1)
-fig.update_xaxes(title_text="Gate Voltage (V_g) [V]", row=1, col=1)
-fig.update_yaxes(title_text="Mobility [cm²/V·s]", range=[0, 400], row=1, col=1)
+# --- [왼쪽] 소자 2D 단면 및 트랩 시각화 ---
+# 소자 프레임
+fig.add_shape(type="rect", x0=0, y0=2, x1=2, y1=5, line=dict(color="cyan"), fillcolor="rgba(0,255,255,0.05)", row=1, col=1)
+fig.add_annotation(x=1, y=3.5, text="Source", showarrow=False, font=dict(color="cyan"), row=1, col=1)
+fig.add_shape(type="rect", x0=8, y0=2, x1=10, y1=5, line=dict(color="cyan"), fillcolor="rgba(0,255,255,0.05)", row=1, col=1)
+fig.add_annotation(x=9, y=3.5, text="Drain", showarrow=False, font=dict(color="cyan"), row=1, col=1)
+fig.add_shape(type="rect", x0=2.5, y0=0.5, x1=7.5, y1=1.5, line=dict(color="yellow"), fillcolor="rgba(255,255,0,0.1)", row=1, col=1)
+fig.add_annotation(x=5, y=1, text="Gate", showarrow=False, font=dict(color="yellow"), row=1, col=1)
+fig.add_shape(type="line", x0=2, y0=2, x1=8, y1=2, line=dict(color="white", width=2, dash="dash"), row=1, col=1)
+fig.add_annotation(x=5, y=2.2, text="SiO₂ Interface", showarrow=False, font=dict(color="white", size=10), row=1, col=1)
 
-# [오른쪽] Id-Vg 커브
-fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_ideal, mode='lines', 
-                         line=dict(color='gray', width=2, dash='dash'), 
-                         name='초기 상태 (Fresh)'), row=1, col=2)
-fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_degraded, mode='lines', 
-                         line=dict(color='cyan', width=4), 
-                         name=f'열화 상태 ({stress_time}년)'), row=1, col=2)
+# 트랩 시각화 (산점도)
+np.random.seed(42) # 위치 고정을 위함
+# 1. N_it (파란색, 인터페이스 근처, 드레인 쪽에 치우침)
+num_nit = int(Nit_slider * 2) # 시각화를 위한 스케일링
+if num_nit > 0:
+    x_nit = np.clip(np.random.normal(7.0, 1.5, num_nit), 2.5, 7.5)
+    y_nit = np.random.normal(2.0, 0.05, num_nit)
+    fig.add_trace(go.Scatter(x=x_nit, y=y_nit, mode='markers', marker=dict(color='cyan', size=5, opacity=0.8), name='계면 트랩 (N_it)'), row=1, col=1)
+
+# 2. N_ot (빨간색, 산화막 내부 배치)
+num_not = int(Not_slider * 2)
+if num_not > 0:
+    x_not = np.random.uniform(2.5, 7.5, num_not)
+    y_not = np.random.uniform(1.6, 1.9, num_not)
+    fig.add_trace(go.Scatter(x=x_not, y=y_not, mode='markers', marker=dict(color='red', size=6, opacity=0.8), name='산화막 트랩 (N_ot)'), row=1, col=1)
+
+fig.update_xaxes(title_text="Channel Length (μm)", range=[0, 10], row=1, col=1)
+fig.update_yaxes(title_text="Depth (nm)", range=[5, 0], row=1, col=1) # reversed
+
+# --- [오른쪽] 통합 I-V 및 이동도 (이중 Y축) ---
+# 1. I_d 커브 (Primary Y, Log scale)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_ideal, mode='lines', line=dict(color='gray', width=2, dash='dash'), name='I_d (Fresh)'), row=1, col=2, secondary_y=False)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_degraded, mode='lines', line=dict(color='cyan', width=3), name='I_d (Degraded)'), row=1, col=2, secondary_y=False)
+
+# 2. Mobility 커브 (Secondary Y, Linear scale, 굵고 뚜렷하게)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=mu_eff_array, mode='lines', line=dict(color='orange', width=4), name='유효 이동도 (μ_eff)'), row=1, col=2, secondary_y=True)
+
 fig.update_xaxes(title_text="Gate Voltage (V_g) [V]", row=1, col=2)
-fig.update_yaxes(title_text="Drain Current (I_d) [A] - Log", type="log", range=[-12, -3], row=1, col=2)
+fig.update_yaxes(title_text="Drain Current (I_d) [A]", type="log", range=[-12, -3], row=1, col=2, secondary_y=False)
+fig.update_yaxes(title_text="Effective Mobility [cm²/V·s]", range=[0, 400], showgrid=False, row=1, col=2, secondary_y=True)
 
-fig.update_layout(height=500, template="plotly_dark", margin=dict(l=20, r=20, t=60, b=20))
+fig.update_layout(height=600, template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
 st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# 3. 소자 상태 파라미터 추출 매트릭스
+# 4. 소자 상태 파라미터 추출
 # ==========================================
 st.divider()
-st.subheader("📊 엄밀한 물리 모델 기반 추출 파라미터")
-m1, m2, m3, m4 = st.columns(4)
+st.subheader("📊 실시간 파라미터 추출")
+c1, c2, c3, c4 = st.columns(4)
 
-m1.metric("초기 문턱 전압 (V_th0)", f"{V_th0:.3f} V", 
-          f"N_A 기반 계산", delta_color="off")
-m2.metric("문턱 전압 변동 (ΔV_th)", f"+{delta_Vth*1000:.1f} mV", 
-          f"N_it & N_ot 영향", delta_color="inverse")
-m3.metric("Subthreshold Swing (SS)", f"{SS_degraded * 1000:.1f} mV/dec", 
-          f"+{(SS_degraded - SS_ideal)*1000:.1f} mV (N_it만 영향)", delta_color="inverse")
-I_on_drop_pct = ((Id_ideal[-1] - Id_degraded[-1]) / Id_ideal[-1]) * 100 if Id_ideal[-1] > 0 else 0
-m4.metric("최대 I_on 감소율", f"-{I_on_drop_pct:.1f} %", 
-          f"Mobility & V_th 열화", delta_color="inverse")
+c1.metric("초기 문턱 전압 (V_th0)", f"{V_th0:.3f} V", f"N_A: {N_A_str} 적용됨", delta_color="off")
+c2.metric("문턱 전압 변동 (ΔV_th)", f"+{delta_Vth*1000:.1f} mV", "우측 이동 (성능 저하)", delta_color="inverse")
+c3.metric("Subthreshold Swing (SS)", f"{SS_degraded * 1000:.1f} mV/dec", f"+{(SS_degraded - SS_ideal)*1000:.1f} mV (N_it만 영향)", delta_color="inverse")
+c4.metric("최고 이동도 (Max μ_eff)", f"{max(mu_eff_array):.1f} cm²/V·s", "온도 & 산란 영향 반영", delta_color="normal")
