@@ -77,7 +77,7 @@ SS_ideal = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * 1e10) / C_ox)
 SS_degraded = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * N_it_total) / C_ox)
 
 # I-V 및 Mobility 커브 연산
-Vg_sweep = np.linspace(0.0, 1.5, 200)
+Vg_sweep = np.linspace(1.2, 3.5, 200)
 Id_ideal, Id_degraded, mu_eff_array = [], [], []
 
 for Vg in Vg_sweep:
