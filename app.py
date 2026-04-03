@@ -89,7 +89,7 @@ V_th_degraded = V_th0 + delta_Vth
 SS_degraded = SS_ideal * (1 + (C_d + q * N_it_total) / C_ox) / (1 + (C_d + q * 1e10) / C_ox)
 
 # I-V 및 Mobility 커브 연산
-Vg_sweep = np.linspace(0.0, 1.5, 200)
+Vg_sweep = np.linspace(1.5, 4.0, 200)
 Id_ideal, Id_degraded, mu_eff_array = [], [], []
 
 # 문턱 전압에서의 기준 전류 (I_th)
