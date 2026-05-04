@@ -62,7 +62,6 @@ if stress_time > 0:
     if apply_bti:
         bti_trap = 3e10 * np.exp(1.2 * stress_vd) * (stress_time ** 0.5) * np.exp(-(0.15/k_eV) * (1/T_K - 1/300))
 
-# 💡 수정됨: 수동 슬라이더 값을 정확히 합산하여 시각화 및 연산에 전달
 total_Nit_base = (hci_trap + bti_trap) * 0.8 + (Nit_slider * 1e11)
 total_Not_base = (hci_trap + bti_trap) * 0.2 + (Not_slider * 1e11)
 
@@ -149,24 +148,27 @@ fig.add_shape(type="line", x0=S_end, y0=2, x1=D_start, y1=2, line=dict(color="wh
 
 np.random.seed(random_seed)
 
-# 💡 수정됨: 계면 트랩 시각화 (수동 조작값 정상 연동)
+# 계면 트랩 시각화
 num_nit = int((total_Nit_base/1e11) * 2) 
 if num_nit > 0:
     x_nit = np.clip(np.random.normal(D_start - L_nm*0.1, L_nm*0.05, num_nit), G_start, G_end)
     y_nit = np.random.normal(2.0, 0.05, num_nit)
     fig.add_trace(go.Scatter(x=x_nit, y=y_nit, mode='markers', marker=dict(color='cyan', size=5, opacity=0.8), name='N_it (계면)'), row=1, col=1, secondary_y=False)
 
-# 💡 수정됨: 산화막 트랩 시각화 살려냄 (빨간 점 표출)
+# 산화막 트랩 시각화
 num_not = int((total_Not_base/1e11) * 2)
 if num_not > 0:
     x_not = np.random.uniform(G_start, G_end, num_not)
     y_not = np.random.uniform(1.6, 1.9, num_not)
     fig.add_trace(go.Scatter(x=x_not, y=y_not, mode='markers', marker=dict(color='red', size=6, opacity=0.8), name='N_ot (산화막)'), row=1, col=1, secondary_y=False)
 
-# Lateral E-field 오버레이
+# 💡 물리적 인과관계 수정: Lateral E-field 오버레이 (V_d 및 N_A 의존성 반영)
+e_field_factor = (N_A / 1e17) ** 0.5
+peak_E_intensity = stress_vd * e_field_factor
 x_array = np.linspace(0, L_nm, 100)
-E_field_profile = np.exp((x_array - D_start) / lambda_char) * stress_vd
-fig.add_trace(go.Scatter(x=x_array, y=E_field_profile, mode='lines', line=dict(color='magenta', width=2, dash='dot'), name='Lateral E-field'), row=1, col=1, secondary_y=True)
+E_field_profile = np.exp((x_array - D_start) / lambda_char) * peak_E_intensity
+
+fig.add_trace(go.Scatter(x=x_array, y=E_field_profile, mode='lines', line=dict(color='magenta', width=2, dash='dot'), name='Lateral E-field (a.u.)'), row=1, col=1, secondary_y=True)
 
 fig.update_xaxes(title_text="Channel Position (nm)", range=[0, L_nm], row=1, col=1)
 fig.update_yaxes(title_text="Depth (nm)", range=[5, 0], row=1, col=1, secondary_y=False)
@@ -196,7 +198,6 @@ c3.metric("Off-Current (누설 전류)", f"{I_off:.1e} A", f"ΔVth = {delta_Vth:
 ratio_str = f"10^{np.log10(Ion_Ioff_ratio):.1f}"
 c4.metric("I_on / I_off 점멸비", ratio_str, "측정 기준: Vg=4.0V", delta_color="normal" if Ion_Ioff_ratio > 1e4 else "inverse")
 
-# 💡 복구 및 강화됨: AI 물리 튜터링 상황 맞춤 해설
 st.subheader("🤖 AI 물리 튜터링 (Interactive Analysis)")
 with st.container(border=True):
     
@@ -206,18 +207,63 @@ with st.container(border=True):
     elif apply_sce and L_nm > 30:
         st.success(f"**✅ Long Channel 거동:** 현재 채널 길이({L_nm}nm)에서는 게이트의 통제력이 안정적으로 유지되고 있습니다.")
 
-    # 2. 스트레스 열화 해설
+    # 2. 스트레스 열화 해설 및 메커니즘 심층 분석
     if stress_time > 0:
         dom_effect = "HCI" if hci_trap > bti_trap else "BTI"
-        st.info(f"**⚡ 스트레스 열화 관찰 (지배적 요인: {dom_effect}):** {stress_time}년 간의 고전압({stress_vd}V) 인가로 열화가 진행되었습니다. 보라색 점선(E-field)이 강한 드레인 쪽에 트랩이 집중 생성되며, 이로 인해 I-V 커브가 오른쪽으로 이동(Vth Shift)하고 전류가 감소했습니다.")
-    
-    # 3. 수동 트랩 주입 해설 (사라진 부분 복구)
-    if Nit_slider > 0 or Not_slider > 0:
-        st.info(f"**🪤 수동 트랩 주입 (Attribution 분리 관찰):** 슬라이더를 통해 계면 트랩({Nit_slider}x10¹¹)과 산화막 트랩({Not_slider}x10¹¹)을 직접 추가하셨습니다. 산화막 트랩(빨간 점)은 Vth만 이동시키지만, 계면 트랩(파란 점)은 기생 커패시턴스로 작용하여 SS(Subthreshold Swing)의 기울기마저 무너뜨리는 것을 볼 수 있습니다.")
+        st.info(f"**⚡ 스트레스 열화 관찰:** {stress_time}년 간의 고전압({stress_vd}V) 인가로 열화가 진행되어 I-V 커브가 오른쪽으로 이동(Vth Shift)하고 전류가 감소했습니다.")
+        
+        # 🔥 [HCI 심층 분석 추가]
+        if dom_effect == "HCI" and apply_hci:
+            st.warning(f"**🔥 HCI (Hot Carrier Injection) 심층 분석:** 현재 높은 드레인 전압({stress_vd}V)과 도핑 농도({N_A:.0e} cm⁻³)로 인해 드레인 접합부의 수평 전계(보라색 점선)가 매우 강해졌습니다. 이 전계에 의해 가속되어 에너지를 얻은 '핫 캐리어'들이 Si-SiO₂ 계면과 충돌하여 결합을 끊고, 드레인 근처에 계면 트랩(파란 점)을 집중적으로 생성하고 있습니다. 도핑 농도(N_A) 슬라이더를 올리면 공핍층이 좁아져 최대 전계(Peak E-field)가 급증하는 현상을 직접 확인해 보세요.")
+        
+        # 🌡️ [BTI 심층 분석 추가]
+        elif dom_effect == "BTI" and apply_bti:
+            st.warning(f"**🌡️ BTI (Bias Temperature Instability) 심층 분석:** 높은 동작 온도({T_K}K) 환경에서 지속적인 전압 스트레스로 인해 BTI 열화가 지배적으로 나타나고 있습니다. 아레니우스(Arrhenius) 모델에 따라 온도를 더 높일수록 열에너지에 의해 산화막 내부 및 계면의 트랩 생성이 급격히 가속화됩니다.")
 
-    # 4. 점멸비 해설
+    # 3. 수동 트랩 주입 해설
+    if Nit_slider > 0 or Not_slider > 0:
+        st.info(f"**🪤 수동 트랩 주입 (Attribution 분리 관찰):** 슬라이더를 통해 계면 트랩({Nit_slider}x10¹¹)과 산화막 트랩({Not_slider}x10¹¹)을 직접 추가하셨습니다. 산화막 트랩(빨간 점)은 Vth만 평행 이동시키지만, 계면 트랩(파란 점)은 기생 커패시턴스로 작용하여 SS(Subthreshold Swing)의 기울기마저 무너뜨리는 것을 볼 수 있습니다.")
+
+    # 4. 점멸비 해설 및 학습 가이드
     if Ion_Ioff_ratio < 1e4:
-        st.error(f"**🚫 스위칭 특성 붕괴:** 현재 점멸비가 {ratio_str} 수준으로 떨어져 논리 소자로서의 기능을 상실했습니다. 채널 길이를 늘리거나 트랩을 제거해 보세요.")
+        st.error(f"**🚫 스위칭 특성 붕괴:** 현재 점멸비가 {ratio_str} 수준으로 떨어져 논리 소자로서의 기능을 상실했습니다. 채널 길이를 늘리거나 스트레스를 줄여보세요.")
     else:
         if stress_time == 0 and Nit_slider == 0 and Not_slider == 0:
-            st.write("💡 **학습 가이드:** 왼쪽 패널에서 '스트레스 시간'을 늘리거나 '수동 트랩' 슬라이더를 조작하여 소자를 노화시켜 보세요.")
+            st.write("💡 **학습 가이드:** 왼쪽 패널에서 '스트레스 시간'을 늘리거나 '수동 트랩'을 주입하여 소자를 노화시켜 보세요. 특히 도핑 농도(N_A)를 조작하며 E-field 강도의 변화를 관찰하는 것을 권장합니다.")
+
+# ==========================================
+# 5. Reference & Documentations
+# ==========================================
+st.divider()
+with st.expander("📚 Reference & Model Validation (물리적 근거)"):
+    st.markdown("""
+    본 시뮬레이터의 물리 엔진(Surrogate Model)은 다음의 핵심 문헌에 제시된 경험적/해석적 수식을 기반으로 구성되었습니다.
+    
+    * **[1] HCI 트랩 생성의 시간 의존성 ($t^{0.5}$ 경향성)**
+        * E. Takeda and N. Suzuki, "An empirical model for device degradation due to hot-carrier injection," *IEEE Electron Device Letters*, vol. 4, no. 4, pp. 111-113, 1983. 
+        * **적용 로직:** `hci_trap` 연산 시 스트레스 시간에 따른 멱함수(Power-law) 열화인 `(stress_time ** 0.5)` 항의 이론적 근거.
+    
+    * **[2] HCI 트랩 생성의 전압 의존성 (Lucky Electron Model)**
+        * C. Hu et al., "Hot-electron-induced MOSFET degradation—Model, monitor, and improvement," *IEEE Transactions on Electron Devices*, vol. 32, no. 2, pp. 375-385, 1985.
+        * **적용 로직:** 높은 드레인 전압에서 핫 캐리어가 발생하는 확률을 모사하기 위해 `hci_trap` 연산 시 `np.exp(1.0 * stress_vd)` 형태의 지수적 가속 계수를 적용.
+    
+    * **[3] BTI 열화 및 온도 의존성 (R-D Model & Arrhenius)**
+        * M. A. Alam and S. Mahapatra, "A comprehensive model of PMOS NBTI degradation," *Microelectronics Reliability*, vol. 45, no. 1, pp. 71-81, 2005.
+        * **적용 로직:** `bti_temp_factor` 연산 시 열적 활성화 공정을 모사하기 위해 활성화 에너지(E_a)를 적용한 아레니우스(Arrhenius) 온도 의존성 수식에 반영.
+    
+    * **[4] 단채널 효과 (SCE) 및 특성 길이 (Scale-Length Theory)**
+        * R.-H. Yan, A. Ourmazd, and K. F. Lee, "Scaling the Si MOSFET: From bulk to SOI to bulk," *IEEE Transactions on Electron Devices*, vol. 39, no. 7, pp. 1704-1710, 1992.
+        * **적용 로직:** 채널 길이(L) 감소에 따른 게이트 통제력 상실을 지수 함수로 근사한 `sce_factor = np.exp(-L_nm / lambda_char)` 수식에 적용.
+    
+    * **[5] DIBL (Drain-Induced Barrier Lowering) 현상**
+        * R. R. Troutman, "VLSI limitations from drain-induced barrier lowering," *IEEE Transactions on Electron Devices*, vol. 26, no. 4, pp. 461-469, 1979.
+        * **적용 로직:** 측정 전압(V_d_read)에 비례하여 문턱전압이 추가 강하하는 `DIBL_shift = 0.1 * V_d_read * sce_factor` 로직의 물리적 근거.
+    
+    * **[6] 유효 이동도 붕괴 (Matthiessen's Rule & Coulomb Scattering)**
+        * C. Lombardi et al., "A physically based mobility model for numerical simulation of nonplanar devices," *IEEE CAD*, vol. 7, no. 11, pp. 1164-1171, 1988.
+        * **적용 로직:** 트랩 증가에 따른 쿨롱/포논 산란 등을 역수 합으로 계산하여 전체 유효 이동도(`mu_eff_bulk`)를 도출하는 매티슨 법칙에 참조.
+    
+    * **[7] Subthreshold Swing (SS) 및 소자 기초 역학**
+        * S. M. Sze and K. K. Ng, *Physics of Semiconductor Devices*, 3rd ed. Hoboken, NJ, USA: John Wiley & Sons, 2006.
+        * **적용 로직:** 추가 트랩(N_it)이 기생 커패시턴스로 작용하여 SS 값을 붕괴시키는 연산과 초기 문턱전압 기반 수식의 표준 근거.
+    """)
