@@ -76,6 +76,7 @@ SS_ideal_long = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * baseline_Nit) / C
 
 lambda_char = 15.0 
 sce_factor = np.exp(-L_nm / lambda_char) if apply_sce else 0.0
+# 측정 단계이므로 DIBL에는 V_d_read 만 적용
 V_th_fresh = V_th0_long - (0.4 * sce_factor) - (0.1 * V_d_read * sce_factor)
 SS_fresh = SS_ideal_long * (1 + 4.0 * sce_factor)
 
@@ -162,11 +163,16 @@ if num_not > 0:
     y_not = np.random.uniform(1.6, 1.9, num_not)
     fig.add_trace(go.Scatter(x=x_not, y=y_not, mode='markers', marker=dict(color='red', size=6, opacity=0.8), name='N_ot (산화막)'), row=1, col=1, secondary_y=False)
 
-# 💡 물리적 인과관계 수정: Lateral E-field 오버레이 (V_d 및 N_A 의존성 반영)
+# 💡 물리적 인과관계 완벽 반영: Lateral E-field 오버레이
+# 1. N_A가 높을수록 공핍층 폭(특성 길이)이 좁아짐 (W ∝ 1/sqrt(N_A))
+lambda_E = lambda_char * np.sqrt(1e17 / N_A) 
+# 2. Peak 전계는 V_d에 비례하고, 좁아진 공핍층 폭에 의해 강도가 급증함
 e_field_factor = (N_A / 1e17) ** 0.5
 peak_E_intensity = stress_vd * e_field_factor
+
 x_array = np.linspace(0, L_nm, 100)
-E_field_profile = np.exp((x_array - D_start) / lambda_char) * peak_E_intensity
+# 3. N_A가 높으면 lambda_E가 작아져서 훨씬 가파른(Sharp) 곡선이 그려짐
+E_field_profile = np.exp((x_array - D_start) / lambda_E) * peak_E_intensity
 
 fig.add_trace(go.Scatter(x=x_array, y=E_field_profile, mode='lines', line=dict(color='magenta', width=2, dash='dot'), name='Lateral E-field (a.u.)'), row=1, col=1, secondary_y=True)
 
@@ -214,7 +220,7 @@ with st.container(border=True):
         
         # 🔥 [HCI 심층 분석 추가]
         if dom_effect == "HCI" and apply_hci:
-            st.warning(f"**🔥 HCI (Hot Carrier Injection) 심층 분석:** 현재 높은 드레인 전압({stress_vd}V)과 도핑 농도({N_A:.0e} cm⁻³)로 인해 드레인 접합부의 수평 전계(보라색 점선)가 매우 강해졌습니다. 이 전계에 의해 가속되어 에너지를 얻은 '핫 캐리어'들이 Si-SiO₂ 계면과 충돌하여 결합을 끊고, 드레인 근처에 계면 트랩(파란 점)을 집중적으로 생성하고 있습니다. 도핑 농도(N_A) 슬라이더를 올리면 공핍층이 좁아져 최대 전계(Peak E-field)가 급증하는 현상을 직접 확인해 보세요.")
+            st.warning(f"**🔥 HCI (Hot Carrier Injection) 심층 분석:** 현재 높은 드레인 전압({stress_vd}V)과 도핑 농도({N_A:.0e} cm⁻³)로 인해 드레인 접합부의 수평 전계(보라색 점선)가 매우 강해졌습니다. 이 전계에 의해 가속되어 에너지를 얻은 '핫 캐리어'들이 Si-SiO₂ 계면과 충돌하여 결합을 끊고, 드레인 근처에 계면 트랩(파란 점)을 집중적으로 생성하고 있습니다. 도핑 농도(N_A) 슬라이더를 올리면 공핍층이 좁아져 최대 전계(Peak E-field)가 가파르게 급증하는 현상을 직접 확인해 보세요.")
         
         # 🌡️ [BTI 심층 분석 추가]
         elif dom_effect == "BTI" and apply_bti:
