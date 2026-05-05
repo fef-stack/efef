@@ -76,15 +76,16 @@ SS_ideal_long = np.log(10) * (k_B * T_K / q) * (1 + (C_d + q * baseline_Nit) / C
 
 lambda_char = 15.0 
 sce_factor = np.exp(-L_nm / lambda_char) if apply_sce else 0.0
-# 측정 단계이므로 DIBL에는 V_d_read 만 적용
 V_th_fresh = V_th0_long - (0.4 * sce_factor) - (0.1 * V_d_read * sce_factor)
 SS_fresh = SS_ideal_long * (1 + 4.0 * sce_factor)
 
 Vg_sweep = np.linspace(0.0, 4.0, 200)
 I_th = 1e-7 * (W_cm / L_cm)
 
+# 💡 수정됨: 함수 반환값에 이동도 배열(mu_eff_array) 추가
 def compute_Id(Nit_val, Not_val):
     Id_array = []
+    mu_eff_array = []
     delta_Vth = (q * (Nit_val + Not_val)) / C_ox
     V_th_deg = V_th_fresh + delta_Vth
     SS_deg = SS_fresh * (1 + (C_d + q * (baseline_Nit + Nit_val)) / C_ox) / (1 + (C_d + q * baseline_Nit) / C_ox)
@@ -97,16 +98,18 @@ def compute_Id(Nit_val, Not_val):
         mu_coulomb = 1e16 / max(1e10, baseline_Nit + Nit_val + Not_val)
         mu_eff = max(mu_floor, 1 / (1/mu_ph + 1/mu_sr + 1/mu_coulomb))
         
+        mu_eff_array.append(mu_eff)
+        
         if Vg < V_th_deg:
             Id_array.append(I_th * 10 ** ((Vg - V_th_deg) / max(1e-6, SS_deg)))
         else:
             I_long = 0.5 * mu_eff * C_ox * (W_cm / L_cm) * ((Vg - V_th_deg) ** 2)
             theta_sat = mu_eff * (Vg - V_th_deg) / (2 * v_sat * L_cm)
             Id_array.append((I_long / (1 + theta_sat)) + I_th)
-    return np.array(Id_array), V_th_deg, SS_deg, delta_Vth
+    return np.array(Id_array), V_th_deg, SS_deg, delta_Vth, np.array(mu_eff_array)
 
 # 앙상블 평균 또는 단일 난수 연산
-Id_fresh, _, _, _ = compute_Id(0, 0)
+Id_fresh, _, _, _, mu_eff_fresh = compute_Id(0, 0)
 np.random.seed(random_seed)
 
 if ensemble_mode:
@@ -114,14 +117,14 @@ if ensemble_mode:
     for _ in range(20):
         noise = np.random.normal(1.0, 0.1)
         n_it_noisy, n_ot_noisy = max(0, total_Nit_base * noise), max(0, total_Not_base * noise)
-        Id_temp, _, _, _ = compute_Id(n_it_noisy, n_ot_noisy)
+        Id_temp, _, _, _, _ = compute_Id(n_it_noisy, n_ot_noisy)
         Id_ensemble.append(Id_temp)
     Id_degraded = np.mean(Id_ensemble, axis=0)
-    _, V_th_degraded, SS_degraded, delta_Vth = compute_Id(total_Nit_base, total_Not_base)
+    _, V_th_degraded, SS_degraded, delta_Vth, mu_eff_degraded = compute_Id(total_Nit_base, total_Not_base)
 else:
     noise = np.random.normal(1.0, 0.05)
     Nit_stoch, Not_stoch = max(0, total_Nit_base * noise), max(0, total_Not_base * noise)
-    Id_degraded, V_th_degraded, SS_degraded, delta_Vth = compute_Id(Nit_stoch, Not_stoch)
+    Id_degraded, V_th_degraded, SS_degraded, delta_Vth, mu_eff_degraded = compute_Id(Nit_stoch, Not_stoch)
 
 I_on = Id_degraded[-1]
 I_off = Id_degraded[0]
@@ -130,10 +133,11 @@ Ion_Ioff_ratio = I_on / I_off
 # ==========================================
 # 3. 통합 시각화 패널 구성
 # ==========================================
+# 💡 수정됨: 두 번째 패널(I-V 곡선)에도 보조 Y축(secondary_y) 활성화
 fig = make_subplots(
     rows=1, cols=2, horizontal_spacing=0.15,
-    specs=[[{"secondary_y": True}, {"secondary_y": False}]],
-    subplot_titles=(f"Trap Marker & E-Field (L = {L_nm} nm)", "통합 전달 특성 (I-V 곡선)")
+    specs=[[{"secondary_y": True}, {"secondary_y": True}]],
+    subplot_titles=(f"Trap Marker & E-Field (L = {L_nm} nm)", "통합 전달 특성 및 이동도 변화")
 )
 
 # [왼쪽] 소자 내부 구조 및 트랩 분포
@@ -163,15 +167,12 @@ if num_not > 0:
     y_not = np.random.uniform(1.6, 1.9, num_not)
     fig.add_trace(go.Scatter(x=x_not, y=y_not, mode='markers', marker=dict(color='red', size=6, opacity=0.8), name='N_ot (산화막)'), row=1, col=1, secondary_y=False)
 
-# 💡 물리적 인과관계 완벽 반영: Lateral E-field 오버레이
-# 1. N_A가 높을수록 공핍층 폭(특성 길이)이 좁아짐 (W ∝ 1/sqrt(N_A))
+# Lateral E-field 오버레이
 lambda_E = lambda_char * np.sqrt(1e17 / N_A) 
-# 2. Peak 전계는 V_d에 비례하고, 좁아진 공핍층 폭에 의해 강도가 급증함
 e_field_factor = (N_A / 1e17) ** 0.5
 peak_E_intensity = stress_vd * e_field_factor
 
 x_array = np.linspace(0, L_nm, 100)
-# 3. N_A가 높으면 lambda_E가 작아져서 훨씬 가파른(Sharp) 곡선이 그려짐
 E_field_profile = np.exp((x_array - D_start) / lambda_E) * peak_E_intensity
 
 fig.add_trace(go.Scatter(x=x_array, y=E_field_profile, mode='lines', line=dict(color='magenta', width=2, dash='dot'), name='Lateral E-field (a.u.)'), row=1, col=1, secondary_y=True)
@@ -180,12 +181,19 @@ fig.update_xaxes(title_text="Channel Position (nm)", range=[0, L_nm], row=1, col
 fig.update_yaxes(title_text="Depth (nm)", range=[5, 0], row=1, col=1, secondary_y=False)
 fig.update_yaxes(title_text="E-field Intensity", showgrid=False, row=1, col=1, secondary_y=True)
 
-# [오른쪽] 통합 I-V
-fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_fresh, mode='lines', line=dict(color='gray', width=2, dash='dash'), name='I_d (Fresh)'), row=1, col=2)
-fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_degraded, mode='lines', line=dict(color='red', width=3), name='I_d (Degraded Avg)' if ensemble_mode else 'I_d (Degraded)'), row=1, col=2)
+# 💡 수정됨: [오른쪽] 통합 I-V 및 유효 이동도(Mobility) 표시
+# I-V 곡선 (Primary Y-axis)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_fresh, mode='lines', line=dict(color='gray', width=2, dash='dash'), name='I_d (Fresh)'), row=1, col=2, secondary_y=False)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=Id_degraded, mode='lines', line=dict(color='red', width=3), name='I_d (Degraded Avg)' if ensemble_mode else 'I_d (Degraded)'), row=1, col=2, secondary_y=False)
 
+# 유효 이동도 곡선 (Secondary Y-axis)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=mu_eff_fresh, mode='lines', line=dict(color='rgba(255, 165, 0, 0.5)', width=2, dash='dash'), name='μ_eff (Fresh)'), row=1, col=2, secondary_y=True)
+fig.add_trace(go.Scatter(x=Vg_sweep, y=mu_eff_degraded, mode='lines', line=dict(color='orange', width=3), name='μ_eff (Degraded)'), row=1, col=2, secondary_y=True)
+
+# 축 레이블 업데이트
 fig.update_xaxes(title_text="Gate Voltage (V_g) [V]", row=1, col=2)
-fig.update_yaxes(title_text="Drain Current (I_d) [A] [log]", type="log", range=[-12, -2], row=1, col=2)
+fig.update_yaxes(title_text="Drain Current (I_d) [A] [log]", type="log", range=[-12, -2], row=1, col=2, secondary_y=False)
+fig.update_yaxes(title_text="Effective Mobility [cm²/V·s]", range=[0, 400], showgrid=False, row=1, col=2, secondary_y=True)
 
 fig.update_layout(height=500, template="plotly_dark", legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5))
 st.plotly_chart(fig, use_container_width=True)
