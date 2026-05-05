@@ -1,8 +1,17 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-streamlit
-torch
-joblib
-numpy
-pandas
-plotly
-scikit-learn
+
+# Core UI & Visualization
+streamlit==1.32.0
+plotly==5.18.0
+
+# Machine Learning & Math
+torch==2.2.2
+numpy==1.26.4
+scipy==1.13.0
+
+# Data Manipulation
+pandas==2.2.2
+
+# Additional Utils
+scikit-learn==1.4.2
+joblib==1.4.0
