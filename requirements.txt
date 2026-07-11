@@ -1,15 +1,5 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 streamlit
-
-torch
-
-joblib
-
-numpy
-
+yfinance
 pandas
-
 plotly
-
-scikit-learn
+openai
